@@ -1,0 +1,83 @@
+# Compiled object files and libraries
+*.o
+*.obj
+*.lo
+*.la
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+
+# Executables and build outputs
+*.exe
+*.out
+*.app
+
+# Debug, profiling, and symbols
+*.dSYM/
+*.pdb
+*.ilk
+*.exp
+*.idb
+*.ipdb
+*.iobj
+gmon.out
+core
+core.*
+
+# Precompiled headers
+*.gch
+*.pch
+
+# Compiler/coverage caches
+.ccache/
+*.gcno
+*.gcda
+*.gcov
+
+# Build directories
+/build/
+build/
+builddir/
+bin/
+obj/
+lib/
+out/
+Debug/
+Release/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake-build-*/
+cmake_install.cmake
+
+# Ninja
+.ninja_log
+.ninja_deps
+build.ninja
+
+# Autotools/Libtool
+autom4te.cache/
+*.deps/
+*.dirstamp
+*.libs/
+config.status
+config.log
+
+# Meson
+meson-logs/
+meson-private/
+
+# Test artifacts
+Testing/
+
+# Editor/OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/
+.idea/

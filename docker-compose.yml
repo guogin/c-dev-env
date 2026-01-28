@@ -1,0 +1,61 @@
+# docker-compose.yml
+version: '3.8'
+
+services:
+  c-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: c-dev-env
+    hostname: c-dev
+    
+    # 挂载配置
+    volumes:
+      # 源代码目录（读写）
+      - ${HOME}/my-project:/workspace:rw
+      # ccache缓存（加速编译）
+      - ccache-data:/workspace/.ccache
+      # CMake缓存
+      - cmake-cache:/workspace/build
+      # 可选：共享宿主机的.gitconfig
+      - ${HOME}/.gitconfig:/root/.gitconfig:ro
+      # 可选：共享SSH密钥（用于git操作）
+      - ${HOME}/.ssh:/root/.ssh:ro
+    
+    # 安全配置（GDB需要）
+    cap_add:
+      - SYS_PTRACE  # 允许ptrace系统调用（GDB必需）
+    security_opt:
+      - seccomp:unconfined  # 放宽seccomp限制（调试需要）
+    
+    # 端口映射（用于远程调试）
+    ports:
+      - "1234:1234"  # gdbserver
+      - "2345:2345"  # 备用调试端口
+    
+    # 环境变量
+    environment:
+      - DISPLAY=${DISPLAY:-:0}  # 支持GUI程序（可选）
+      - TERM=xterm-256color
+      - COLORTERM=truecolor
+    
+    # 资源限制（可选，防止编译占用过多资源）
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: '4'
+    #       memory: 8G
+    
+    # 保持容器运行
+    stdin_open: true
+    tty: true
+    
+    # 工作目录
+    working_dir: /workspace
+
+# 持久化卷
+volumes:
+  ccache-data:
+    name: c-dev-ccache
+  cmake-cache:
+    name: c-dev-cmake-build
