@@ -1,26 +1,29 @@
 #!/usr/bin/env bash
 # c-dev-env.sh - C语言开发环境容器管理脚本
+# 可以在任意 C 项目目录中使用
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTAINER_NAME="c-dev-env"
-PROJECT_DIR="${HOME}/my-project"
+PROJECT_DIR="${SCRIPT_DIR}"  # 项目目录就是脚本所在目录
 
 # 颜色定义（使用 ANSI 转义序列）
 if [ -t 1 ]; then
-    # 只在终端输出时使用颜色
     RED=$(printf '\033[0;31m')
     GREEN=$(printf '\033[0;32m')
     YELLOW=$(printf '\033[1;33m')
     BLUE=$(printf '\033[0;34m')
+    CYAN=$(printf '\033[0;36m')
+    MAGENTA=$(printf '\033[0;35m')
     NC=$(printf '\033[0m')
 else
-    # 非终端输出时不使用颜色
     RED=''
     GREEN=''
     YELLOW=''
     BLUE=''
+    CYAN=''
+    MAGENTA=''
     NC=''
 fi
 
@@ -61,9 +64,33 @@ check_podman() {
     fi
 }
 
+# 检查必需文件是否存在
+check_required_files() {
+    local missing_files=()
+    
+    if [ ! -f "$SCRIPT_DIR/Dockerfile" ]; then
+        missing_files+=("Dockerfile")
+    fi
+    
+    if [ ! -f "$SCRIPT_DIR/docker-compose.yml" ]; then
+        missing_files+=("docker-compose.yml")
+    fi
+    
+    if [ ${#missing_files[@]} -gt 0 ]; then
+        error "Missing required files in project directory:"
+        for file in "${missing_files[@]}"; do
+            printf "  - %s\n" "$file"
+        done
+        printf "\n"
+        info "Please ensure Dockerfile and docker-compose.yml are in the project directory."
+        exit 1
+    fi
+}
+
 # 构建镜像
 build() {
     info "Building C development environment..."
+    check_required_files
     cd "$SCRIPT_DIR"
     
     podman-compose build
@@ -71,6 +98,7 @@ build() {
     
     if [ $result -eq 0 ]; then
         success "Build completed!"
+        info "Image can be used by both CLI and VSCode containers"
         return 0
     else
         error "Build failed"
@@ -80,18 +108,13 @@ build() {
 
 # 启动容器
 start() {
-    info "Starting C development environment..."
+    info "Starting CLI development container..."
+    check_required_files
     cd "$SCRIPT_DIR"
-    
-    # 检查项目目录是否存在
-    if [ ! -d "$PROJECT_DIR" ]; then
-        warn "Project directory $PROJECT_DIR does not exist. Creating..."
-        mkdir -p "$PROJECT_DIR"
-    fi
     
     # 检查容器是否已经在运行
     if podman ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-        warn "Container is already running"
+        warn "CLI container is already running"
         return 0
     fi
     
@@ -108,9 +131,10 @@ start() {
     for i in {1..10}; do
         if podman ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             printf "\n"
-            success "Container started successfully!"
+            success "CLI container started successfully!"
             info "Container name: $CONTAINER_NAME"
             info "Project directory: $PROJECT_DIR -> /workspace"
+            info "VSCode container (if running) is independent and unaffected"
             return 0
         fi
         printf "."
@@ -124,11 +148,11 @@ start() {
 
 # 停止容器
 stop() {
-    info "Stopping C development environment..."
+    info "Stopping CLI development container..."
     cd "$SCRIPT_DIR"
     
     if ! podman ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-        warn "Container is not running"
+        warn "CLI container is not running"
         return 0
     fi
     
@@ -136,7 +160,8 @@ stop() {
     local result=$?
     
     if [ $result -eq 0 ]; then
-        success "Container stopped!"
+        success "CLI container stopped!"
+        info "VSCode container (if running) is unaffected"
         return 0
     else
         error "Failed to stop container"
@@ -146,7 +171,7 @@ stop() {
 
 # 重启容器
 restart() {
-    info "Restarting container..."
+    info "Restarting CLI container..."
     stop
     sleep 2
     start
@@ -155,7 +180,7 @@ restart() {
 # 进入容器shell
 shell() {
     if ! podman ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-        error "Container is not running. Starting..."
+        error "CLI container is not running. Starting..."
         start
         local result=$?
         if [ $result -ne 0 ]; then
@@ -163,7 +188,7 @@ shell() {
         fi
     fi
     
-    info "Entering container shell..."
+    info "Entering CLI container shell..."
     info "Type 'exit' to return to host"
     printf "\n"
     
@@ -181,7 +206,7 @@ exec_cmd() {
     fi
     
     if ! podman ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-        error "Container is not running"
+        error "CLI container is not running"
         return 1
     fi
     
@@ -193,43 +218,54 @@ status() {
     info "Container status:"
     printf "\n"
     
+    # CLI 容器状态
+    printf "${CYAN}=== CLI Container (c-dev-env) ===${NC}\n"
     if podman ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-        # 显示容器信息
         podman ps --filter "name=${CONTAINER_NAME}" \
             --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-        
         printf "\n"
-        success "Container is running ✓"
+        success "CLI container is running ✓"
         
-        # 显示资源使用情况
         printf "\n"
         info "Resource usage:"
         podman stats --no-stream "$CONTAINER_NAME" 2>/dev/null || warn "Could not retrieve resource usage"
     else
-        warn "Container is not running"
-        
-        # 检查容器是否存在但已停止
+        warn "CLI container is not running"
         if podman ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
             info "Container exists but is stopped. Use '$0 start' to start it."
         else
             info "Container does not exist. Use '$0 build' to create it."
         fi
     fi
+    
+    printf "\n"
+    
+    # VSCode 容器状态
+    printf "${CYAN}=== VSCode Dev Containers ===${NC}\n"
+    local vscode_containers=$(podman ps --format '{{.Names}}' | grep -i 'vsc\|devcontainer' || true)
+    if [ -n "$vscode_containers" ]; then
+        podman ps --filter "name=vsc" --filter "name=devcontainer" \
+            --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || true
+        printf "\n"
+        success "VSCode container(s) detected ✓"
+    else
+        info "No VSCode containers running"
+        info "Open VSCode and select 'Reopen in Container' to start one"
+    fi
 }
 
 # 查看日志
 logs() {
     if ! podman ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-        error "Container does not exist"
+        error "CLI container does not exist"
         return 1
     fi
     
-    info "Container logs:"
+    info "CLI container logs:"
     printf "\n"
     
     shift  # 移除 'logs' 参数
     if [ $# -eq 0 ]; then
-        # 默认显示最后50行
         podman logs --tail 50 "$CONTAINER_NAME"
     else
         podman logs "$@" "$CONTAINER_NAME"
@@ -240,9 +276,12 @@ logs() {
 clean() {
     printf "\n"
     warn "╔════════════════════════════════════════════════════════╗"
-    warn "║  WARNING: This will remove the container and all      ║"
-    warn "║  build caches (ccache, cmake cache)!                  ║"
+    warn "║  WARNING: This will remove:                           ║"
+    warn "║  - CLI container (c-dev-env)                          ║"
+    warn "║  - Build caches (ccache, cmake cache)                 ║"
+    warn "║                                                        ║"
     warn "║  Your source code will NOT be affected.               ║"
+    warn "║  VSCode containers are managed separately.            ║"
     warn "╚════════════════════════════════════════════════════════╝"
     printf "\n"
     
@@ -271,11 +310,11 @@ clean() {
 
 # 快速编译项目
 build_project() {
-    info "Building project in container..."
+    info "Building project in CLI container..."
     printf "\n"
     
     if ! podman ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-        error "Container is not running. Starting..."
+        error "CLI container is not running. Starting..."
         start
         local result=$?
         if [ $result -ne 0 ]; then
@@ -283,7 +322,6 @@ build_project() {
         fi
     fi
     
-    # 检测构建系统并编译
     BUILD_CMD='
 cd /workspace || exit 1
 
@@ -292,7 +330,6 @@ if [ -f CMakeLists.txt ]; then
     mkdir -p build
     cd build
     
-    # 使用 Ninja + ccache 加速编译
     if command -v ninja >/dev/null 2>&1; then
         echo "==> Configuring with Ninja..."
         cmake -GNinja \
@@ -343,7 +380,6 @@ fi
         printf "\n"
         success "Build completed!"
         
-        # 显示 ccache 统计
         info "ccache statistics:"
         exec_cmd "ccache -s 2>/dev/null || echo 'ccache not available'"
         return 0
@@ -363,7 +399,7 @@ run() {
         return 1
     fi
     
-    info "Running $1 in container..."
+    info "Running $1 in CLI container..."
     printf "\n"
     
     exec_cmd "$@"
@@ -371,15 +407,107 @@ run() {
 
 # VSCode配置向导
 setup_vscode() {
-    info "Setting up VSCode configuration..."
+    info "Setting up VSCode Dev Container configuration..."
     printf "\n"
     
+    # 检查必需文件
+    check_required_files
+    
+    DEVCONTAINER_DIR="$PROJECT_DIR/.devcontainer"
     VSCODE_DIR="$PROJECT_DIR/.vscode"
     
     # 创建目录
+    mkdir -p "$DEVCONTAINER_DIR"
     mkdir -p "$VSCODE_DIR"
 
-    # 创建 launch.json - 调试配置
+    # 创建 devcontainer.json
+    cat > "$DEVCONTAINER_DIR/devcontainer.json" << 'EOF'
+{
+    "name": "C Dev (VSCode)",
+    
+    // 直接使用 Dockerfile，让 VSCode 创建独立容器
+    "dockerFile": "../Dockerfile",
+    
+    // 构建参数
+    "build": {
+        "dockerfile": "../Dockerfile",
+        "context": ".."
+    },
+    
+    // 容器内的工作目录
+    "workspaceFolder": "/workspace",
+    
+    // 挂载配置
+    "mounts": [
+        // 挂载代码目录
+        "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+        // 挂载 .gitconfig
+        "source=${env:HOME}${env:USERPROFILE}/.gitconfig,target=/root/.gitconfig,type=bind,consistency=cached",
+        // 挂载 SSH 密钥
+        "source=${env:HOME}${env:USERPROFILE}/.ssh,target=/root/.ssh,type=bind,consistency=cached"
+    ],
+    
+    // 运行参数（对应 docker run 的参数）
+    "runArgs": [
+        "--cap-add=SYS_PTRACE",
+        "--security-opt=seccomp:unconfined",
+        "--hostname=c-dev-vscode"
+    ],
+    
+    // 端口转发
+    "forwardPorts": [1234, 2345],
+    
+    // 容器启动后要安装的 VSCode 扩展
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-vscode.cpptools",
+                "ms-vscode.cpptools-extension-pack",
+                "ms-vscode.cmake-tools",
+                "twxs.cmake",
+                "ms-vscode.makefile-tools",
+                "eamodio.gitlens"
+            ],
+            "settings": {
+                "C_Cpp.default.compilerPath": "/usr/bin/gcc",
+                "C_Cpp.default.cStandard": "c17",
+                "C_Cpp.default.cppStandard": "c++17",
+                "C_Cpp.default.intelliSenseMode": "linux-gcc-x64",
+                "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
+                "C_Cpp.errorSquiggles": "enabled",
+                "files.watcherExclude": {
+                    "**/build/**": true,
+                    "**/.ccache/**": true
+                },
+                "files.associations": {
+                    "*.h": "c",
+                    "*.c": "c"
+                },
+                "editor.formatOnSave": false,
+                "cmake.configureOnOpen": false,
+                "terminal.integrated.defaultProfile.linux": "bash"
+            }
+        }
+    },
+    
+    // 容器启动后执行的命令
+    "postCreateCommand": "echo '=== Dev Container Ready ===' && gcc --version && cmake --version && gdb --version",
+    
+    // 用户设置
+    "remoteUser": "root",
+    
+    // 容器关闭行为
+    "shutdownAction": "stopContainer",
+    
+    // 容器环境变量
+    "containerEnv": {
+        "TERM": "xterm-256color",
+        "COLORTERM": "truecolor"
+    }
+}
+EOF
+
+    # 创建 launch.json
     cat > "$VSCODE_DIR/launch.json" << 'EOF'
 {
     "version": "0.2.0",
@@ -441,7 +569,7 @@ setup_vscode() {
 }
 EOF
 
-    # 创建 tasks.json - 构建任务
+    # 创建 tasks.json
     cat > "$VSCODE_DIR/tasks.json" << 'EOF'
 {
     "version": "2.0.0",
@@ -510,7 +638,7 @@ EOF
 }
 EOF
 
-    # 创建 c_cpp_properties.json - IntelliSense 配置
+    # 创建 c_cpp_properties.json
     cat > "$VSCODE_DIR/c_cpp_properties.json" << 'EOF'
 {
     "configurations": [
@@ -538,87 +666,100 @@ EOF
 }
 EOF
 
-    # 创建 settings.json
-    if [ ! -f "$VSCODE_DIR/settings.json" ]; then
-        cat > "$VSCODE_DIR/settings.json" << 'EOF'
-{
-    "files.watcherExclude": {
-        "**/build/**": true,
-        "**/.ccache/**": true
-    },
-    "files.associations": {
-        "*.h": "c",
-        "*.c": "c"
-    },
-    "editor.formatOnSave": false,
-    "C_Cpp.default.compilerPath": "/usr/bin/gcc",
-    "C_Cpp.errorSquiggles": "enabled"
-}
+    # 创建 .gitignore（如果不存在）
+    if [ ! -f "$PROJECT_DIR/.gitignore" ]; then
+        cat > "$PROJECT_DIR/.gitignore" << 'EOF'
+# Build directory
+build/
+.ccache/
+
+# VSCode
+.vscode/
+.devcontainer/
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# Compiled files
+*.o
+*.a
+*.so
+*.exe
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# OS files
+.DS_Store
+Thumbs.db
 EOF
+        info "Created .gitignore"
     fi
     
     printf "\n"
-    success "VSCode configuration created!"
+    success "VSCode Dev Container configuration created!"
     printf "\n"
     info "Configuration files created:"
+    printf "  - %s\n" "$DEVCONTAINER_DIR/devcontainer.json"
     printf "  - %s\n" "$VSCODE_DIR/launch.json"
     printf "  - %s\n" "$VSCODE_DIR/tasks.json"
     printf "  - %s\n" "$VSCODE_DIR/c_cpp_properties.json"
-    printf "  - %s\n" "$VSCODE_DIR/settings.json"
+    if [ -f "$PROJECT_DIR/.gitignore" ]; then
+        printf "  - %s\n" "$PROJECT_DIR/.gitignore"
+    fi
     printf "\n"
     
-    info "IMPORTANT: Container lifecycle workflow:"
-    printf "  ${YELLOW}1.${NC} Start container:   ${GREEN}%s start${NC}\n" "$0"
-    printf "  ${YELLOW}2.${NC} Open VSCode:       ${GREEN}%s vscode${NC}\n" "$0"
+    printf "${CYAN}╔════════════════════════════════════════════════════════╗${NC}\n"
+    printf "${CYAN}║           TWO INDEPENDENT CONTAINERS                   ║${NC}\n"
+    printf "${CYAN}╚════════════════════════════════════════════════════════╝${NC}\n"
     printf "\n"
-    warn "VSCode will NOT start/stop the container automatically."
-    info "You must use the script to manage container lifecycle."
-}
-
-# 查找容器
-find_container() {
-    podman ps --format '{{.Names}}' | grep -E "^c-dev-env$" | head -1
-}
-
-# 用 VSCode 连接到容器
-vscode() {
-    # 确保容器运行
-    CONTAINER=$(find_container)
-    if [ -z "$CONTAINER" ]; then
-        warn "Container not running. Starting..."
-        start
-        CONTAINER=$(find_container)
-        if [ -z "$CONTAINER" ]; then
-            error "Failed to start container"
-            return 1
-        fi
-    fi
     
-    info "Opening VSCode..."
-    info "Container: $CONTAINER"
+    printf "${MAGENTA}Container 1: CLI Container (c-dev-env)${NC}\n"
+    printf "  Purpose: Command-line operations\n"
+    printf "  Managed by: ./c-dev-env.sh\n"
+    printf "  Usage:\n"
+    printf "    ${GREEN}./c-dev-env.sh start${NC}          # Start\n"
+    printf "    ${GREEN}./c-dev-env.sh shell${NC}          # Enter shell\n"
+    printf "    ${GREEN}./c-dev-env.sh build-project${NC}  # Build\n"
+    printf "    ${GREEN}./c-dev-env.sh stop${NC}           # Stop\n"
+    printf "\n"
     
-    # 方法1：使用命令行（需要 Remote-Containers 扩展）
-    code --remote "attached-container+$CONTAINER" "$PROJECT_DIR"
+    printf "${MAGENTA}Container 2: VSCode Container (auto-named)${NC}\n"
+    printf "  Purpose: VSCode development & debugging\n"
+    printf "  Managed by: VSCode Dev Containers\n"
+    printf "  Usage:\n"
+    printf "    ${GREEN}code %s${NC}\n" "$PROJECT_DIR"
+    printf "    ${GREEN}Click 'Reopen in Container'${NC}\n"
+    printf "    ${GREEN}Press F5 to debug${NC}\n"
+    printf "    ${GREEN}Press Ctrl+Shift+B to build${NC}\n"
+    printf "\n"
     
-    # 如果上面不行，提示手动操作
-    local result=$?
-    if [ $result -ne 0 ]; then
-        warn "Automatic attach failed. Please:"
-        printf "  1. Open VSCode: ${GREEN}code %s${NC}\n" "$PROJECT_DIR"
-        printf "  2. Press F1\n"
-        printf "  3. Select: ${GREEN}Dev Containers: Attach to Running Container...${NC}\n"
-        printf "  4. Choose: ${GREEN}%s${NC}\n" "$CONTAINER"
-        printf "  5. Open folder: ${GREEN}/workspace${NC}\n"
-    fi
+    printf "${YELLOW}Key Points:${NC}\n"
+    printf "  ✓ Both containers mount the same code directory\n"
+    printf "  ✓ They can run simultaneously\n"
+    printf "  ✓ Changes in one are visible in the other\n"
+    printf "  ✓ Each has its own isolated environment\n"
+    printf "\n"
+    
+    success "Setup complete! Choose your workflow:"
+    printf "  - Use CLI for quick operations\n"
+    printf "  - Use VSCode for debugging and development\n"
+    printf "  - Use both simultaneously if needed\n"
 }
 
 # 显示ccache统计
 ccache_stats() {
-    info "ccache statistics:"
+    info "ccache statistics (CLI container):"
     printf "\n"
     
     if ! podman ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-        error "Container is not running"
+        error "CLI container is not running"
         return 1
     fi
     
@@ -627,10 +768,10 @@ ccache_stats() {
 
 # 清理ccache
 ccache_clean() {
-    warn "Clearing ccache..."
+    warn "Clearing ccache (CLI container)..."
     
     if ! podman ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-        error "Container is not running"
+        error "CLI container is not running"
         return 1
     fi
     
@@ -652,61 +793,111 @@ usage() {
 
 ${GREEN}═══════════════════════════════════════════════════════════${NC}
 ${GREEN}  C Development Environment Manager${NC}
+${GREEN}  Dual-Container Architecture${NC}
 ${GREEN}═══════════════════════════════════════════════════════════${NC}
+
+${YELLOW}ARCHITECTURE:${NC}
+    ${MAGENTA}Container 1${NC}: CLI Container (${CYAN}c-dev-env${NC})
+      - Managed by this script
+      - For command-line operations
+      - Always named: c-dev-env
+    
+    ${MAGENTA}Container 2${NC}: VSCode Container (${CYAN}auto-named${NC})
+      - Managed by VSCode Dev Containers
+      - For graphical debugging
+      - Auto-named by VSCode
+    
+    Both containers:
+      ✓ Mount the same code directory
+      ✓ Can run simultaneously
+      ✓ Share the same codebase
 
 ${YELLOW}USAGE:${NC}
     $0 [command] [options]
 
 ${YELLOW}COMMANDS:${NC}
-    ${BLUE}build${NC}               Build the container image
-    ${BLUE}start${NC}               Start the development container
-    ${BLUE}stop${NC}                Stop the development container
-    ${BLUE}restart${NC}             Restart the container
-    ${BLUE}shell${NC}               Open a bash shell in the container
-    ${BLUE}exec${NC} <cmd>          Execute a command in the container
-    ${BLUE}status${NC}              Show container status and resource usage
-    ${BLUE}logs${NC} [opts]         Show container logs
-    ${BLUE}build-project${NC}       Build the project inside container
-    ${BLUE}run${NC} <exe> [args]    Run an executable in the container
+    ${BLUE}setup-vscode${NC}        Setup VSCode Dev Container (do this first!)
+    ${BLUE}build${NC}               Build the Docker image
+    ${BLUE}start${NC}               Start CLI container
+    ${BLUE}stop${NC}                Stop CLI container
+    ${BLUE}restart${NC}             Restart CLI container
+    ${BLUE}shell${NC}               Open bash in CLI container
+    ${BLUE}exec${NC} <cmd>          Execute command in CLI container
+    ${BLUE}status${NC}              Show all containers status
+    ${BLUE}logs${NC} [opts]         Show CLI container logs
+    ${BLUE}build-project${NC}       Build project in CLI container
+    ${BLUE}run${NC} <exe> [args]    Run executable in CLI container
     ${BLUE}ccache-stats${NC}        Show ccache statistics
     ${BLUE}ccache-clean${NC}        Clear ccache
-    ${BLUE}clean${NC}               Remove container and volumes
-    ${BLUE}setup-vscode${NC}        Setup VSCode Dev Container configuration
-    ${BLUE}vscode${NC}              Open VSCode connected to the container
-    ${BLUE}help${NC}                Show this help message
+    ${BLUE}clean${NC}               Remove CLI container and volumes
+    ${BLUE}help${NC}                Show this help
+
+${YELLOW}PROJECT DIRECTORY:${NC}
+    Current project: ${GREEN}$PROJECT_DIR${NC}
+
+${YELLOW}WORKFLOW 1: VSCode Development (Recommended)${NC}
+    ${GREEN}# One-time setup${NC}
+    1. $0 build
+    2. $0 setup-vscode
+    3. code .
+    4. Click "Reopen in Container"
+    
+    ${GREEN}# Daily work${NC}
+    - VSCode automatically manages its container
+    - Press F5 to debug
+    - Press Ctrl+Shift+B to build
+    - Close VSCode to stop container
+
+${YELLOW}WORKFLOW 2: CLI Operations${NC}
+    ${GREEN}# Start CLI container${NC}
+    $0 start
+    
+    ${GREEN}# Quick operations${NC}
+    $0 shell                    # Enter shell
+    $0 exec "gcc --version"     # Run command
+    $0 build-project            # Compile
+    $0 run build/myapp          # Execute
+    
+    ${GREEN}# Stop when done${NC}
+    $0 stop
+
+${YELLOW}WORKFLOW 3: Hybrid (Both Containers)${NC}
+    ${GREEN}# Use both simultaneously${NC}
+    Terminal: $0 start && $0 shell
+    VSCode:   code . -> Reopen in Container
+    
+    ${GREEN}# Benefits${NC}
+    - CLI for quick tests
+    - VSCode for debugging
+    - Both see same code changes
 
 ${YELLOW}EXAMPLES:${NC}
-    ${GREEN}# Initial setup${NC}
-    $0 build                    # Build the Docker image
-    $0 start                    # Start the container
-    $0 setup-vscode             # Setup VSCode integration
+    ${GREEN}# Setup${NC}
+    $0 build                    # Build image once
+    $0 setup-vscode             # Setup VSCode once
 
-    ${GREEN}# Daily development${NC}
-    $0 shell                    # Enter container shell
-    $0 exec "gcc --version"     # Run command in container
-    $0 build-project            # Compile your project
-    $0 run build/myapp arg1     # Run your program
-
-    ${GREEN}# Monitoring${NC}
-    $0 status                   # Check container status
-    $0 logs -f                  # Follow logs
-    $0 ccache-stats             # Check build cache
-
-    ${GREEN}# Cleanup${NC}
+    ${GREEN}# CLI operations${NC}
+    $0 start                    # Start CLI container
+    $0 shell                    # Enter container
+    $0 exec "ls -la"            # Run command
+    $0 build-project            # Build project
     $0 stop                     # Stop container
-    $0 clean                    # Remove everything
 
-${YELLOW}QUICK START:${NC}
-    1. $0 build
-    2. $0 start
-    3. $0 setup-vscode
-    4. code ~/my-project
-    5. Click "Reopen in Container" in VSCode
+    ${GREEN}# VSCode operations${NC}
+    code .                      # Open in VSCode
+    # Click "Reopen in Container"
+    # F5 to debug, Ctrl+Shift+B to build
+
+    ${GREEN}# Status and monitoring${NC}
+    $0 status                   # Check all containers
+    $0 logs -f                  # Follow CLI logs
+    $0 ccache-stats             # Cache stats
 
 ${YELLOW}CONTAINER INFO:${NC}
-    Name:           $CONTAINER_NAME
-    Project Dir:    $PROJECT_DIR
-    Mount Point:    /workspace
+    CLI Container:   $CONTAINER_NAME
+    Project Dir:     $PROJECT_DIR
+    Mount Point:     /workspace
+    VSCode Container: Auto-named by VSCode
 
 ${GREEN}═══════════════════════════════════════════════════════════${NC}
 
@@ -715,10 +906,8 @@ EOF
 
 # 主函数
 main() {
-    # 检查依赖
     check_podman
     
-    # 解析命令
     case "${1:-help}" in
         build)
             build
@@ -764,9 +953,6 @@ main() {
         setup-vscode|setup|init)
             setup_vscode
             ;;
-        vscode)
-            vscode
-            ;;
         help|--help|-h)
             usage
             ;;
@@ -779,5 +965,4 @@ main() {
     esac
 }
 
-# 执行主函数
 main "$@"
